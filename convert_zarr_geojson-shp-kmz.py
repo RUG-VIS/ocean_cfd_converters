@@ -170,6 +170,116 @@ def parcels_geopandas_to_kml(
     # return
 
 
+def parcels_geopandas_to_kml_time(
+        gdf: gpd.GeoDataFrame,
+        output_path,
+        document_name="Parcels Particle Trajectories",
+        rubber_ducks=True,
+):
+    """Writes parcels trajectories to KML file.
+
+    Converts the GeoDataFrame from the `parcels_to_geopandas` function into KML
+    for use in Google Earth. Each particle trajectory is converted to a gx:Track item
+    to include timestamp information in the path.
+
+    Only uses the trajectory ID, time, lon, and lat variables.
+
+    Parameters
+    ----------
+    gdf : gpd.GeoDataFrame
+        GeoDataFrame as output from the `parcels_to_geopandas` function
+
+    path : pathlike
+        Path to save the KML to.
+
+    rubber_ducks : bool
+        Replace default particle marker with rubber duck icon.
+
+
+    See also
+    --------
+    More on gx:Track in KML:
+    https://developers.google.com/kml/documentation/kmlreference#gx:track
+    """
+    outdir = path.dirname(output_path)
+    fname = path.basename(output_path)
+    pfname, pfext = path.splitext(fname)
+
+    # Define namspaces
+    kml_ns = "http://www.opengis.net/kml/2.2"
+    gx_ns = "http://www.google.com/kml/ext/2.2"
+
+    # Custom icon styling
+    icon_style_string = f"""<Style id="iconStyle">
+            <IconStyle>
+                <scale>0.8</scale>
+                <Icon>
+                    <href>https://icons.iconarchive.com/icons/thesquid.ink/free-flat-sample/256/rubber-duck-icon.png</href>
+                </Icon>
+              </IconStyle>
+            </Style>
+        """
+
+    # lead_df = gdf.groupby("trajectory")
+    lead_df = gdf.groupby("obs")
+    total_items = len(lead_df)
+    current_item = 0
+    # Generating gx:Track items
+    # for trajectory_idx, trajectory_gdf in lead_df:
+    for obs_idx, obs_gdf in lead_df:
+        # trajectory_gdf = trajectory_gdf.sort_values("obs")
+        obs_gdf = obs_gdf.sort_values("trajectory")
+
+        # print("{}\n".format(len(trajectory_gdf["time"])))
+        # if len(obs_gdf["time"]) < 3:
+        #     current_item += 1
+        #     continue
+
+        kml_out = etree.Element("{%s}kml" % kml_ns, nsmap={None: kml_ns, "gx": gx_ns})
+        document = etree.SubElement(kml_out, "Document", id = "1", name=document_name)
+        if rubber_ducks:
+            icon_styling = etree.fromstring(icon_style_string)
+            document.append(icon_styling)
+
+
+        for rowidx, item in obs_gdf.iterrows():
+            trajectory_idx = rowidx
+            # trajectory = obs_gdf.iloc[trajectory_idx]
+
+            placemark = etree.SubElement(document, "Placemark")
+            name_element = etree.SubElement(placemark, "name")
+            name_element.text = str(trajectory_idx)
+
+            # Link custom icon styling
+            if rubber_ducks:
+                style_url = etree.SubElement(placemark, "styleUrl")
+                style_url.text = "#iconStyle"
+
+            gx_track = etree.SubElement(placemark, "{%s}Track" % gx_ns)
+            etree.SubElement(gx_track, "{%s}altitudeMode" % gx_ns, text="clampToGround")
+
+            when_element = etree.SubElement(gx_track, "datetime")
+            when_element.text = item["time"].strftime("%Y-%m-%dT%H:%M:%SZ")
+
+            gx_coord_element = etree.SubElement(gx_track, "{%s}coord" % gx_ns)
+            gx_coord_element.text = f"{item['geometry'].x} {item['geometry'].y} 0.0"
+
+        # Save the KML to a file
+        trajectory_path = path.join(outdir, pfname+"_t"+str(obs_idx)+pfext)
+        with open(trajectory_path, "wb") as f:
+            try:
+                f.write(etree.tostring(kml_out, pretty_print=True))
+            except:
+                f.write(etree.tostring(kml_out))
+
+        current_item += 1
+        workdone = current_item / total_items
+        print("\rProgress - writing KML instances: [{0:50s}] {1:.1f}%".format('#' * int(workdone * 50), workdone * 100), end="", flush=True)
+
+    print("\n")
+    return
+
+
 # ==================================================================================================================== #
 # Example:
 #  python3 convert_zarr_geojson-shp-kmz.py
@@ -201,4 +311,5 @@ if __name__ == "__main__":
         if not path.exists(outdir):
             mkdir(outdir)
         output_path = path.join(outdir, fname)
-        parcels_geopandas_to_kml(gdf_parcels, output_path)
+        # parcels_geopandas_to_kml(gdf_parcels, output_path)
+        parcels_geopandas_to_kml_time(gdf_parcels, output_path)
