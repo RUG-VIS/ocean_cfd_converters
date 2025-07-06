@@ -36,7 +36,7 @@ def parcels_to_geopandas(ds, ram_gb_limit=4, suppress_warnings=False):
 
     if ds.nbytes > RAM_LIMIT_BYTES and not suppress_warnings:
         raise MemoryError(
-            f"Dataset is {ds.nbytes:_} bytes, but RAM_LIMIT_BYTES set max to be {RAM_LIMIT_BYTES:_} bytes."
+            "Dataset is %i bytes, but RAM_LIMIT_BYTES set max to be %i bytes." % (ds.nbytes, RAM_LIMIT_BYTES)
         )
 
     df = (
@@ -99,7 +99,7 @@ def parcels_geopandas_to_kml(
     gx_ns = "http://www.google.com/kml/ext/2.2"
 
     # Custom icon styling
-    icon_style_string = f"""<Style id="iconStyle">
+    icon_style_string = """<Style id="iconStyle">
             <IconStyle>
                 <scale>0.8</scale>
                 <Icon>
@@ -144,7 +144,7 @@ def parcels_geopandas_to_kml(
 
         for _, row in trajectory_gdf.iterrows():
             gx_coord_element = etree.SubElement(gx_track, "{%s}coord" % gx_ns)
-            gx_coord_element.text = f"{row['geometry'].x} {row['geometry'].y} 0.0"
+            gx_coord_element.text = "%f %f 0.0" % (row['geometry'].x, row['geometry'].y)
 
         # Save the KML to a file
         trajectory_path = path.join(outdir, pfname+"_"+str(trajectory_idx)+pfext)
@@ -210,7 +210,7 @@ def parcels_geopandas_to_kml_time(
     gx_ns = "http://www.google.com/kml/ext/2.2"
 
     # Custom icon styling
-    icon_style_string = f"""<Style id="iconStyle">
+    icon_style_string = """<Style id="iconStyle">
             <IconStyle>
                 <scale>0.8</scale>
                 <Icon>
@@ -262,7 +262,7 @@ def parcels_geopandas_to_kml_time(
             when_element.text = item["time"].strftime("%Y-%m-%dT%H:%M:%SZ")
 
             gx_coord_element = etree.SubElement(gx_track, "{%s}coord" % gx_ns)
-            gx_coord_element.text = f"{item['geometry'].x} {item['geometry'].y} 0.0"
+            gx_coord_element.text = "%f %f 0.0" % (item['geometry'].x, item['geometry'].y)
 
         # Save the KML to a file
         trajectory_path = path.join(outdir, pfname+"_t"+str(obs_idx)+pfext)
