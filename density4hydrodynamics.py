@@ -8,24 +8,25 @@ from glob import glob
 import math
 import datetime
 import numpy as np
-from numpy.random import default_rng
+# from numpy.random import default_rng
 
 import xarray as xr
-import dask.array as da
+# import dask.array as da
 from netCDF4 import Dataset
 import h5py
 
-import fnmatch
+# import fnmatch
 import gc
 import os
-import time as ostime
+# import time as ostime
 
-from scipy.interpolate import interpn, griddata
-from scipy.spatial import Delaunay
-from scipy.interpolate import LinearNDInterpolator
-import scipy.interpolate as spint
+# from scipy.interpolate import interpn, griddata
+# from scipy.spatial import Delaunay
+# from scipy.interpolate import LinearNDInterpolator
+# import scipy.interpolate as spint
 import scipy.spatial.qhull as qhull
-import itertools
+# import itertools
+from polyTEOS10_consts import *
 
 from multiprocessing import Pool
 
@@ -33,6 +34,13 @@ try:
     from mpi4py import MPI
 except:
     MPI = None
+
+try:
+    import numba
+except:
+    numba = None
+# from numba import njit, prange
+
 with_GC = False
 DBG_MSG = False
 
@@ -236,6 +244,40 @@ def perIterGC():
     gc.collect()
 
 
+if numba:
+    @numba.njit(parallel=True)
+    def PolyTEOS10_bsq_numba(fX, fY, fZ, fTP0, fNA0, items, dtype=np.float32):
+        Ncount = fX.shape[0]
+        density = np.zeros(Ncount, dtype=dtype)
+        pressure = np.zeros(Ncount, dtype=dtype)
+        for i in numba.prange(items.shape[0]):
+            if DBG_MSG:
+                print("Parameters: {}\n".format((items[i, 0], items[i, 1], items[i, 2], ti)))
+            Z = -fZ[items[i, 2]]  # note: use negative depths!
+            SA = fNA0[items[i, 2], items[i, 1], items[i, 0]]
+            CT = fTP0[items[i, 2], items[i, 1], items[i, 0]]
+            ss = math.sqrt((SA + deltaS) / SAu)
+            tt = CT / CTu
+            zz = -Z / Zu
+            rz3 = R013 * tt + R103 * ss + R003
+            rz2 = (R022 * tt + R112 * ss + R012) * tt + (R202 * ss + R102) * ss + R002
+            rz1 = (((R041 * tt + R131 * ss + R031) * tt + (R221 * ss + R121) * ss + R021) * tt +
+                   ((R311 * ss + R211) * ss + R111) * ss + R011) * tt + \
+                  (((R401 * ss + R301) * ss + R201) * ss + R101) * ss + R001
+            rz0 = (((((R060 * tt + R150 * ss + R050) * tt + (R240 * ss + R140) * ss + R040) * tt +
+                     ((R330 * ss + R230) * ss + R130) * ss + R030) * tt +
+                    (((R420 * ss + R320) * ss + R220) * ss + R120) * ss + R020) * tt +
+                   ((((R510 * ss + R410) * ss + R310) * ss + R210) * ss + R110) * ss + R010) * tt + \
+                  (((((R600 * ss + R500) * ss + R400) * ss + R300) * ss + R200) * ss + R100) * ss + R000
+            density[i] = ((rz3 * zz + rz2) * zz + rz1) * zz + rz0  # [kg/m^3]
+            pressure[i] = rho_sw * g_const * fZ[items[i, 2]] + p0  # [bar]
+
+
+        return (density, pressure)
+
+
+
+
 # initialize a worker in the process pool
 def worker_init(fX, fY, fZ, fTP0, fNA0):
     global var_lon
@@ -248,6 +290,8 @@ def worker_init(fX, fY, fZ, fTP0, fNA0):
     var_salinity = fNA0
     global var_temperature
     var_temperature = fTP0
+    # global var_timeindex
+    # var_timeindex = ti
 
 def PolyTEOS10_bsq_func(i, j, k):
     '''
@@ -265,70 +309,71 @@ def PolyTEOS10_bsq_func(i, j, k):
     temperature and density of seawater.  Journal of Atmospheric and
     Oceanic Technology, 20, 730-741.
     '''
-
+    if DBG_MSG:
+        print("Parameters: {}\n".format((i, j, k)))
     Z = -var_depth[k]  # note: use negative depths!
     SA = var_salinity[k, j, i]
     CT = var_temperature[k, j, i]
-    rho_sw = 1023.6  # kg/m^3
-    g_const = 9.80665  # m/s^2
-    p0 = 1.01325  # bar; hPA = bar * 1000
-
-    SAu = 40 * 35.16504 / 35
-    CTu = 40
-    Zu = 1e4
-    deltaS = 32
-    R000 = 8.0189615746e+02
-    R100 = 8.6672408165e+02
-    R200 = -1.7864682637e+03
-    R300 = 2.0375295546e+03
-    R400 = -1.2849161071e+03
-    R500 = 4.3227585684e+02
-    R600 = -6.0579916612e+01
-    R010 = 2.6010145068e+01
-    R110 = -6.5281885265e+01
-    R210 = 8.1770425108e+01
-    R310 = -5.6888046321e+01
-    R410 = 1.7681814114e+01
-    R510 = -1.9193502195e+00
-    R020 = -3.7074170417e+01
-    R120 = 6.1548258127e+01
-    R220 = -6.0362551501e+01
-    R320 = 2.9130021253e+01
-    R420 = -5.4723692739e+00
-    R030 = 2.1661789529e+01
-    R130 = -3.3449108469e+01
-    R230 = 1.9717078466e+01
-    R330 = -3.1742946532e+00
-    R040 = -8.3627885467e+00
-    R140 = 1.1311538584e+01
-    R240 = -5.3563304045e+00
-    R050 = 5.4048723791e-01
-    R150 = 4.8169980163e-01
-    R060 = -1.9083568888e-01
-    R001 = 1.9681925209e+01
-    R101 = -4.2549998214e+01
-    R201 = 5.0774768218e+01
-    R301 = -3.0938076334e+01
-    R401 = 6.6051753097e+00
-    R011 = -1.3336301113e+01
-    R111 = -4.4870114575e+00
-    R211 = 5.0042598061e+00
-    R311 = -6.5399043664e-01
-    R021 = 6.7080479603e+00
-    R121 = 3.5063081279e+00
-    R221 = -1.8795372996e+00
-    R031 = -2.4649669534e+00
-    R131 = -5.5077101279e-01
-    R041 = 5.5927935970e-01
-    R002 = 2.0660924175e+00
-    R102 = -4.9527603989e+00
-    R202 = 2.5019633244e+00
-    R012 = 2.0564311499e+00
-    R112 = -2.1311365518e-01
-    R022 = -1.2419983026e+00
-    R003 = -2.3342758797e-02
-    R103 = -1.8507636718e-02
-    R013 = 3.7969820455e-01
+    # rho_sw = 1023.6  # kg/m^3
+    # g_const = 9.80665  # m/s^2
+    # p0 = 1.01325  # bar; hPA = bar * 1000
+    #
+    # SAu = 40 * 35.16504 / 35
+    # CTu = 40
+    # Zu = 1e4
+    # deltaS = 32
+    # R000 = 8.0189615746e+02
+    # R100 = 8.6672408165e+02
+    # R200 = -1.7864682637e+03
+    # R300 = 2.0375295546e+03
+    # R400 = -1.2849161071e+03
+    # R500 = 4.3227585684e+02
+    # R600 = -6.0579916612e+01
+    # R010 = 2.6010145068e+01
+    # R110 = -6.5281885265e+01
+    # R210 = 8.1770425108e+01
+    # R310 = -5.6888046321e+01
+    # R410 = 1.7681814114e+01
+    # R510 = -1.9193502195e+00
+    # R020 = -3.7074170417e+01
+    # R120 = 6.1548258127e+01
+    # R220 = -6.0362551501e+01
+    # R320 = 2.9130021253e+01
+    # R420 = -5.4723692739e+00
+    # R030 = 2.1661789529e+01
+    # R130 = -3.3449108469e+01
+    # R230 = 1.9717078466e+01
+    # R330 = -3.1742946532e+00
+    # R040 = -8.3627885467e+00
+    # R140 = 1.1311538584e+01
+    # R240 = -5.3563304045e+00
+    # R050 = 5.4048723791e-01
+    # R150 = 4.8169980163e-01
+    # R060 = -1.9083568888e-01
+    # R001 = 1.9681925209e+01
+    # R101 = -4.2549998214e+01
+    # R201 = 5.0774768218e+01
+    # R301 = -3.0938076334e+01
+    # R401 = 6.6051753097e+00
+    # R011 = -1.3336301113e+01
+    # R111 = -4.4870114575e+00
+    # R211 = 5.0042598061e+00
+    # R311 = -6.5399043664e-01
+    # R021 = 6.7080479603e+00
+    # R121 = 3.5063081279e+00
+    # R221 = -1.8795372996e+00
+    # R031 = -2.4649669534e+00
+    # R131 = -5.5077101279e-01
+    # R041 = 5.5927935970e-01
+    # R002 = 2.0660924175e+00
+    # R102 = -4.9527603989e+00
+    # R202 = 2.5019633244e+00
+    # R012 = 2.0564311499e+00
+    # R112 = -2.1311365518e-01
+    # R022 = -1.2419983026e+00
+    # R003 = -2.3342758797e-02
+    # R103 = -1.8507636718e-02
+    # R013 = 3.7969820455e-01
     ss = math.sqrt((SA + deltaS) / SAu)
     tt = CT / CTu
     zz = -Z / Zu
@@ -340,95 +385,95 @@ def PolyTEOS10_bsq_func(i, j, k):
     var_pressure = rho_sw * g_const * var_depth[k] + p0  # [bar]
     return (i, j, k, var_density, var_pressure)
 
-def PolyTEOS10_bsq(particle, fieldset, time):
-    '''
-    calculates density based on the polyTEOS10-bsq algorithm from Appendix A.2 of
-    https://www.sciencedirect.com/science/article/pii/S1463500315000566
-    requires fieldset.abs_salinity and fieldset.cons_temperature Fields in the fieldset
-    and a particle.density Variable in the ParticleSet
-
-    References:
-    Roquet, F., Madec, G., McDougall, T. J., Barker, P. M., 2014: Accurate
-    polynomial expressions for the density and specific volume of
-    seawater using the TEOS-10 standard. Ocean Modelling.
-    McDougall, T. J., D. R. Jackett, D. G. Wright and R. Feistel, 2003:
-    Accurate and computationally efficient algorithms for potential
-    temperature and density of seawater.  Journal of Atmospheric and
-    Oceanic Technology, 20, 730-741.
-    '''
-
-    Z = -particle.depth  # note: use negative depths!
-    SA = fieldset.salinity[time, particle.depth, particle.lat, particle.lon]
-    CT = fieldset.temperature[time, particle.depth, particle.lat, particle.lon]
-    rho_sw = 1023.6  # kg/m^3
-    g_const = 9.80665  # m/s^2
-    p0 = 1.01325  # bar; hPA = bar * 1000
-
-    SAu = 40 * 35.16504 / 35
-    CTu = 40
-    Zu = 1e4
-    deltaS = 32
-    R000 = 8.0189615746e+02
-    R100 = 8.6672408165e+02
-    R200 = -1.7864682637e+03
-    R300 = 2.0375295546e+03
-    R400 = -1.2849161071e+03
-    R500 = 4.3227585684e+02
-    R600 = -6.0579916612e+01
-    R010 = 2.6010145068e+01
-    R110 = -6.5281885265e+01
-    R210 = 8.1770425108e+01
-    R310 = -5.6888046321e+01
-    R410 = 1.7681814114e+01
-    R510 = -1.9193502195e+00
-    R020 = -3.7074170417e+01
-    R120 = 6.1548258127e+01
-    R220 = -6.0362551501e+01
-    R320 = 2.9130021253e+01
-    R420 = -5.4723692739e+00
-    R030 = 2.1661789529e+01
-    R130 = -3.3449108469e+01
-    R230 = 1.9717078466e+01
-    R330 = -3.1742946532e+00
-    R040 = -8.3627885467e+00
-    R140 = 1.1311538584e+01
-    R240 = -5.3563304045e+00
-    R050 = 5.4048723791e-01
-    R150 = 4.8169980163e-01
-    R060 = -1.9083568888e-01
-    R001 = 1.9681925209e+01
-    R101 = -4.2549998214e+01
-    R201 = 5.0774768218e+01
-    R301 = -3.0938076334e+01
-    R401 = 6.6051753097e+00
-    R011 = -1.3336301113e+01
-    R111 = -4.4870114575e+00
-    R211 = 5.0042598061e+00
-    R311 = -6.5399043664e-01
-    R021 = 6.7080479603e+00
-    R121 = 3.5063081279e+00
-    R221 = -1.8795372996e+00
-    R031 = -2.4649669534e+00
-    R131 = -5.5077101279e-01
-    R041 = 5.5927935970e-01
-    R002 = 2.0660924175e+00
-    R102 = -4.9527603989e+00
-    R202 = 2.5019633244e+00
-    R012 = 2.0564311499e+00
-    R112 = -2.1311365518e-01
-    R022 = -1.2419983026e+00
-    R003 = -2.3342758797e-02
-    R103 = -1.8507636718e-02
-    R013 = 3.7969820455e-01
-    ss = math.sqrt((SA + deltaS) / SAu)
-    tt = CT / CTu
-    zz = -Z / Zu
-    rz3 = R013 * tt + R103 * ss + R003
-    rz2 = (R022 * tt + R112 * ss + R012) * tt + (R202 * ss + R102) * ss + R002
-    rz1 = (((R041 * tt + R131 * ss + R031) * tt + (R221 * ss + R121) * ss + R021) * tt + ((R311 * ss + R211) * ss + R111) * ss + R011) * tt + (((R401 * ss + R301) * ss + R201) * ss + R101) * ss + R001
-    rz0 = (((((R060 * tt + R150 * ss + R050) * tt + (R240 * ss + R140) * ss + R040) * tt + ((R330 * ss + R230) * ss + R130) * ss + R030) * tt + (((R420 * ss + R320) * ss + R220) * ss + R120) * ss + R020) * tt + ((((R510 * ss + R410) * ss + R310) * ss + R210) * ss + R110) * ss + R010) * tt + (((((R600 * ss + R500) * ss + R400) * ss + R300) * ss + R200) * ss + R100) * ss + R000
-    particle.density = ((rz3 * zz + rz2) * zz + rz1) * zz + rz0  # [kg/m^3]
-    particle.pressure = rho_sw * g_const * particle.depth + p0  # [bar]
+# def PolyTEOS10_bsq(particle, fieldset, time):
+#     '''
+#     calculates density based on the polyTEOS10-bsq algorithm from Appendix A.2 of
+#     https://www.sciencedirect.com/science/article/pii/S1463500315000566
+#     requires fieldset.abs_salinity and fieldset.cons_temperature Fields in the fieldset
+#     and a particle.density Variable in the ParticleSet
+#
+#     References:
+#     Roquet, F., Madec, G., McDougall, T. J., Barker, P. M., 2014: Accurate
+#     polynomial expressions for the density and specific volume of
+#     seawater using the TEOS-10 standard. Ocean Modelling.
+#     McDougall, T. J., D. R. Jackett, D. G. Wright and R. Feistel, 2003:
+#     Accurate and computationally efficient algorithms for potential
+#     temperature and density of seawater.  Journal of Atmospheric and
+#     Oceanic Technology, 20, 730-741.
+#     '''
+#
+#     Z = -particle.depth  # note: use negative depths!
+#     SA = fieldset.salinity[time, particle.depth, particle.lat, particle.lon]
+#     CT = fieldset.temperature[time, particle.depth, particle.lat, particle.lon]
+#     rho_sw = 1023.6  # kg/m^3
+#     g_const = 9.80665  # m/s^2
+#     p0 = 1.01325  # bar; hPA = bar * 1000
+#
+#     SAu = 40 * 35.16504 / 35
+#     CTu = 40
+#     Zu = 1e4
+#     deltaS = 32
+#     R000 = 8.0189615746e+02
+#     R100 = 8.6672408165e+02
+#     R200 = -1.7864682637e+03
+#     R300 = 2.0375295546e+03
+#     R400 = -1.2849161071e+03
+#     R500 = 4.3227585684e+02
+#     R600 = -6.0579916612e+01
+#     R010 = 2.6010145068e+01
+#     R110 = -6.5281885265e+01
+#     R210 = 8.1770425108e+01
+#     R310 = -5.6888046321e+01
+#     R410 = 1.7681814114e+01
+#     R510 = -1.9193502195e+00
+#     R020 = -3.7074170417e+01
+#     R120 = 6.1548258127e+01
+#     R220 = -6.0362551501e+01
+#     R320 = 2.9130021253e+01
+#     R420 = -5.4723692739e+00
+#     R030 = 2.1661789529e+01
+#     R130 = -3.3449108469e+01
+#     R230 = 1.9717078466e+01
+#     R330 = -3.1742946532e+00
+#     R040 = -8.3627885467e+00
+#     R140 = 1.1311538584e+01
+#     R240 = -5.3563304045e+00
+#     R050 = 5.4048723791e-01
+#     R150 = 4.8169980163e-01
+#     R060 = -1.9083568888e-01
+#     R001 = 1.9681925209e+01
+#     R101 = -4.2549998214e+01
+#     R201 = 5.0774768218e+01
+#     R301 = -3.0938076334e+01
+#     R401 = 6.6051753097e+00
+#     R011 = -1.3336301113e+01
+#     R111 = -4.4870114575e+00
+#     R211 = 5.0042598061e+00
+#     R311 = -6.5399043664e-01
+#     R021 = 6.7080479603e+00
+#     R121 = 3.5063081279e+00
+#     R221 = -1.8795372996e+00
+#     R031 = -2.4649669534e+00
+#     R131 = -5.5077101279e-01
+#     R041 = 5.5927935970e-01
+#     R002 = 2.0660924175e+00
+#     R102 = -4.9527603989e+00
+#     R202 = 2.5019633244e+00
+#     R012 = 2.0564311499e+00
+#     R112 = -2.1311365518e-01
+#     R022 = -1.2419983026e+00
+#     R003 = -2.3342758797e-02
+#     R103 = -1.8507636718e-02
+#     R013 = 3.7969820455e-01
+#     ss = math.sqrt((SA + deltaS) / SAu)
+#     tt = CT / CTu
+#     zz = -Z / Zu
+#     rz3 = R013 * tt + R103 * ss + R003
+#     rz2 = (R022 * tt + R112 * ss + R012) * tt + (R202 * ss + R102) * ss + R002
+#     rz1 = (((R041 * tt + R131 * ss + R031) * tt + (R221 * ss + R121) * ss + R021) * tt + ((R311 * ss + R211) * ss + R111) * ss + R011) * tt + (((R401 * ss + R301) * ss + R201) * ss + R101) * ss + R001
+#     rz0 = (((((R060 * tt + R150 * ss + R050) * tt + (R240 * ss + R140) * ss + R040) * tt + ((R330 * ss + R230) * ss + R130) * ss + R030) * tt + (((R420 * ss + R320) * ss + R220) * ss + R120) * ss + R020) * tt + ((((R510 * ss + R410) * ss + R310) * ss + R210) * ss + R110) * ss + R010) * tt + (((((R600 * ss + R500) * ss + R400) * ss + R300) * ss + R200) * ss + R100) * ss + R000
+#     particle.density = ((rz3 * zz + rz2) * zz + rz1) * zz + rz0  # [kg/m^3]
+#     particle.pressure = rho_sw * g_const * particle.depth + p0  # [bar]
 
 
 # def doublegyre_waves3D(fX, fY, fZ, fT, fT_fpath_mapping, is3D, hasW, multifile, grid_adaptive, time_adaptive):
@@ -440,8 +485,8 @@ def PolyTEOS10_bsq(particle, fieldset, time):
 #     return lon, lat, depth, times
 
 # ====
-# start example: python3 doublegyre_scenario.py -f NNvsGeostatistics/data/file.txt -t 30 -dt 720 -ot 1440 -im 'rk4' -N 2**12 -sres 2 -sm 'regular_jitter'
-#                python3 doublegyre_scenario.py -f NNvsGeostatistics/data/file.txt -t 366 -dt 720 -ot 2880 -im 'rk4' -N 2**12 -sres 2.5 -gres 5 -sm 'regular_jitter' -fsx 360 -fsy 180
+# start example: python3 density4hydrodynamics.py -d /media/christian/MyPassport/data/hydrodynamic/CMEMS/GLOBAL_REANALYSIS_PHY_001_030/ -o /media/christian/MyPassport/data/hydrodynamic/CMEMS/GLOBAL/ -U mercatorglorys12v1_gl12_mean_2016* -V mercatorglorys12v1_gl12_mean_2016* -T mercatorglorys12v1_gl12_mean_2016* -N mercatorglorys12v1_gl12_mean_2016* --uvar uo --vvar vo --wvar None --tpvar thetao --navar so --xvar longitude --yvar latitude --zvar depth --tvar time -F nc --writeNC
+#                python3 density4hydrodynamics.py -d /media/christian/MyPassport/data/hydrodynamic/CMEMS/GLOBAL_REANALYSIS_PHY_001_030_monthly/ -o /media/christian/MyPassport/data/hydrodynamic/CMEMS/GLOBAL/ -U mercatorglorys12v1_gl12_mean_2016* -V mercatorglorys12v1_gl12_mean_2016* -T mercatorglorys12v1_gl12_mean_2016* -N mercatorglorys12v1_gl12_mean_2016* --uvar uo --vvar vo --wvar None --tpvar thetao --navar so --xvar longitude --yvar latitude --zvar depth --tvar time -F nc --writeNC
 #                python3 doublegyre_scenario.py -f vis_example/metadata.txt -t 366 -dt 60 -ot 720 -im 'rk4' -N 2**12 -sres 2.5 -gres 5 -sm 'regular_jitter' -fsx 360 -fsy 180
 #                python3 doublegyre_scenario.py -f metadata.txt -t 366 -dt 60 -ot 1440 -im 'rk4' -N 2**12 -sres 1.25 -gres 2 -sm 'regular_jitter' -fsx 540 -fsy 270 -fsz 20 -3D
 # ====
@@ -483,6 +528,16 @@ if __name__=='__main__':
     parser.add_argument("--twvar", dest="twvar", type=str, default="None", help="variable name of t in field 'W', if differing between fields.")
     parser.add_argument("--ttpvar", dest="ttpvar", type=str, default="None", help="variable name of t in field 'SST', if differing between fields.")
     parser.add_argument("--tnavar", dest="tnavar", type=str, default="None", help="variable name of t in field 'SSS', if differing between fields.")
+    parser.add_argument("--fixZ", dest="fixZ", action="store_true", default=False, help="transform z-Axis to display height, e.g. depth is negative")
+    parser.add_argument("-LOm", "--lonmin", dest="lonmin", type=float, default=None, help="min. longitude (in arcdegrees or metres) to be plotted - only effective when interpolating")
+    parser.add_argument("-LOM", "--lonmax", dest="lonmax", type=float, default=None, help="max. longitude (in arcdegrees or metres) to be plotted - only effective when interpolating")
+    parser.add_argument("-LAm", "--latmin", dest="latmin", type=float, default=None, help="min. latitude (in arcdegrees or metres) to be plotted - only effective when interpolating")
+    parser.add_argument("-LAM", "--latmax", dest="latmax", type=float, default=None, help="max. latitude (in arcdegrees or metres) to be plotted - only effective when interpolating")
+    parser.add_argument("-DM", "--depthmax", dest="depthmax", type=float, default=None, help="max. latitude (in arcdegrees or metres) to be plotted - only effective when interpolating")
+    parser.add_argument("-TIm", "--timin", dest="timin", type=int, default=None, help="min. time index to plot - only effective when interpolating")
+    parser.add_argument("-TIM", "--timax", dest="timax", type=int, default=None, help="max. time index to plot - only effective when interpolating")
+    parser.add_argument("-sT", "--scale_T", dest="scale_T", type=str, default='1.0', help="Scaling the values of T(ime) by value - needed e.g. to recalc fields into the 'seconds' base (default: 1.0).")
+    parser.add_argument("-ST", "--shift_T", dest="shift_T", type=str, default="0.0", help="shift (in seconds) of the values of T(ime) by value - set a new base (default: 0.0).")
     parser.add_argument("-F", "--format", dest="format", choices=['nc', 'h5'], default='nc', help="type of field files to evaluate, NetCDF (nc) or HDF5 (h5). Default: nc")
     parser.add_argument("--writeNC", dest="writeNC", action='store_true', default=False, help="write output to NetCDF (default: false)")
     parser.add_argument("--writeH5", dest="writeH5", action='store_true', default=False, help="write output to HDF5 (default: false)")
@@ -498,6 +553,8 @@ if __name__=='__main__':
     periodicFlag = True
     hasW = False
     is3D = True
+    scale_T = float(eval(args.scale_T))
+    shift_T = float(eval(args.shift_T))
     netcdf_write = args.writeNC
     hdf5_write = args.writeH5
     save_single_file = False
@@ -656,6 +713,7 @@ if __name__=='__main__':
     if DBG_MSG:
         print("ns_per_sec = {}".format((ns_per_sec/np.timedelta64(1, 'ns')).astype(np.float64)))
     sec_per_day = 86400.0
+    # ==== ==== ==== ==== ==== ==== ==== #
     xyz_type = np.float64
     get_uvw_bounds = False
 
@@ -1258,9 +1316,9 @@ if __name__=='__main__':
     print("multifile: {}".format(multifile))
     print("grid adaptive: {}".format(grid_adaptive))
     print("time adaptive: {}".format(time_adaptive))
-    print("fX - shape: {}; |fX|: {}".format(fX_shape, fX_len))
-    print("fY - shape: {}; |fY|: {}".format(fY_shape, fY_len))
-    print("fZ - shape: {}; |fZ|: {}".format(fZ_shape, fZ_len))
+    print("fX - shape: {}; |fX|: {}".format(fX_shape, len(fX)))
+    print("fY - shape: {}; |fY|: {}".format(fY_shape, len(fY)))
+    print("fZ - shape: {}; |fZ|: {}".format(fZ_shape, len(fZ)))
     print("fT - shape: {}; |fT|: {}".format(fT.shape, len(fT)))
     print("fU - shape: {}".format(fU_shape))
     print("fV - shape: {}".format(fV_shape))
@@ -1283,32 +1341,32 @@ if __name__=='__main__':
     sY = fY_ext[1] - fY_ext[0]
     sZ = fZ_ext[1] - fZ_ext[0]
     sT = fT_ext[1] - fT_ext[0]
-    resample_x = 0
-    resample_y = 0
-    if (fX_ext[0] >= -180.1) and (fX_ext[1] <= 180.1):
-        fX = (fX / 180.0) * ((2.0 * np.pi * equatorial_a_radius) / 2.0)
-        fX_ext = (np.nanmin(fX), np.nanmax(fX))
-        sX = fX_ext[1] - fX_ext[0]
-        resample_x = 1
-    elif (fX_ext[0] >= 0.0) and (fX_ext[1] <= 360.1):
-        # fX = (fX / 360.0) * (2.0 * np.pi * equatorial_a_radius)
-        fX = ((fX-180.0) / 180.0) * ((2.0 * np.pi * equatorial_a_radius) / 2.0)
-        fX_min, fX_max = fX_min-180.0, fX_max-180.0
-        fX_ext = (np.nanmin(fX), np.nanmax(fX))
-        sX = fX_ext[1] - fX_ext[0]
-        resample_x = 2
-    if (fY_ext[0] >= -90.1) and (fY_ext[1] <= 90.1):
-        fY = (fY / 90.0) * ((2.0 * np.pi  * polar_b_radius) / 2.0)
-        fY_ext = (np.nanmin(fY), np.nanmax(fY))
-        sY = fY_ext[1] - fY_ext[0]
-        resample_y = 1
-    elif (fY_ext[0] >= 0.0) and (fY_ext[1] <= 180.1):
-        # fY = (fY / 180.0) * (np.pi * polar_b_radius)
-        fY = ((fY-90.0) / 90.0) * ((2.0 * np.pi * polar_b_radius) / 2.0)
-        fY_min, fY_max = fY_min-90.0, fY_max-90.0
-        fY_ext = (np.nanmin(fY), np.nanmax(fY))
-        sY = fY_ext[1] - fY_ext[0]
-        resample_y = 2
+    # resample_x = 0
+    # resample_y = 0
+    # if (fX_ext[0] >= -180.1) and (fX_ext[1] <= 180.1):
+    #     fX = (fX / 180.0) * ((2.0 * np.pi * equatorial_a_radius) / 2.0)
+    #     fX_ext = (np.nanmin(fX), np.nanmax(fX))
+    #     sX = fX_ext[1] - fX_ext[0]
+    #     resample_x = 1
+    # elif (fX_ext[0] >= 0.0) and (fX_ext[1] <= 360.1):
+    #     # fX = (fX / 360.0) * (2.0 * np.pi * equatorial_a_radius)
+    #     fX = ((fX-180.0) / 180.0) * ((2.0 * np.pi * equatorial_a_radius) / 2.0)
+    #     fX_min, fX_max = fX_min-180.0, fX_max-180.0
+    #     fX_ext = (np.nanmin(fX), np.nanmax(fX))
+    #     sX = fX_ext[1] - fX_ext[0]
+    #     resample_x = 2
+    # if (fY_ext[0] >= -90.1) and (fY_ext[1] <= 90.1):
+    #     fY = (fY / 90.0) * ((2.0 * np.pi  * polar_b_radius) / 2.0)
+    #     fY_ext = (np.nanmin(fY), np.nanmax(fY))
+    #     sY = fY_ext[1] - fY_ext[0]
+    #     resample_y = 1
+    # elif (fY_ext[0] >= 0.0) and (fY_ext[1] <= 180.1):
+    #     # fY = (fY / 180.0) * (np.pi * polar_b_radius)
+    #     fY = ((fY-90.0) / 90.0) * ((2.0 * np.pi * polar_b_radius) / 2.0)
+    #     fY_min, fY_max = fY_min-90.0, fY_max-90.0
+    #     fY_ext = (np.nanmin(fY), np.nanmax(fY))
+    #     sY = fY_ext[1] - fY_ext[0]
+    #     resample_y = 2
     fX_dx_1 = fX[1:]
     fX_dx_0 = fX[0:-1]
     fX_dx = abs(fX_dx_1-fX_dx_0)
@@ -1319,7 +1377,7 @@ if __name__=='__main__':
     fX_dx_max = np.nanmax(fX_dx[fx_dx_valid])
     del fX_dx_0
     del fX_dx_1
-    del fX_dx
+    # # del fX_dx
     fY_dy_1 = fY[1:]
     fY_dy_0 = fY[0:-1]
     fY_dy = abs(fY_dy_1-fY_dy_0)
@@ -1330,7 +1388,7 @@ if __name__=='__main__':
     fY_dy_max = np.nanmax(fY_dy[fy_dy_valid])
     del fY_dy_0
     del fY_dy_1
-    del fY_dy
+    # # del fY_dy
     fZ_dz_1 = fZ[1:]
     fZ_dz_0 = fZ[0:-1]
     fZ_dz = abs(fZ_dz_1-fZ_dz_0)
@@ -1341,15 +1399,22 @@ if __name__=='__main__':
     fZ_dz_max = np.nanmax(fZ_dz[fz_dz_valid])
     del fZ_dz_0
     del fZ_dz_1
-    del fZ_dz
+    # # del fZ_dz
     lateral_gres = min(fX_dx_mid, fY_dy_mid)
-    lateral_gres = max(lateral_gres, (0.25 / 180.0) * ((2.0 * np.pi * equatorial_a_radius) / 2.0)) if resample_x > 0 or resample_y > 0 else lateral_gres
-    # lateral_gres = max(min(fX_dx_mid, fY_dy_mid), (0.25 / 180.0) * ((2.0 * np.pi * equatorial_a_radius) / 2.0))
+    # lateral_gres = max(lateral_gres, (0.25 / 180.0) * ((2.0 * np.pi * equatorial_a_radius) / 2.0)) if resample_x > 0 or resample_y > 0 else lateral_gres
+    # # lateral_gres = max(min(fX_dx_mid, fY_dy_mid), (0.25 / 180.0) * ((2.0 * np.pi * equatorial_a_radius) / 2.0))
     vertical_gres = fZ_dz_mid
 
-    del fX
-    del fY
-    del fZ
+    # ======= fT - scale-shift ======= #
+    fT = (fT * scale_T) + shift_T
+    fT_dt = fT_dt * scale_T
+    fT_ext = ((fT_ext[0] * scale_T) - shift_T, (fT_ext[1] * scale_T) + shift_T)
+    sT = fT_ext[1] - fT_ext[0]
+    # ==== end - fT - scale-shift ==== #
+
+    # del fX
+    # del fY
+    # del fZ
     print("sX - {}".format(sX))
     print("sY - {}".format(sY))
     print("sZ - {}".format(sZ))
@@ -1366,6 +1431,73 @@ if __name__=='__main__':
     print("dT: {}; fT_dt: {}".format(dt, fT_dt))
     gc.collect()
 
+    # ==== scale subsetting ==== #
+    loni_min = 0
+    loni_max = fX.shape[0]-1
+    loni_range = loni_max-loni_min
+    lati_min = 0
+    lati_max = fY.shape[0]-1
+    lati_range = lati_max-lati_min
+    depthi_max = fZ.shape[0]-1
+    depthi_range = depthi_max-0
+    clip = False
+    if args.lonmin is not None or args.lonmax is not None:
+        clip = True
+        lonmin = fX_min if args.lonmin is None else max(fX_min, args.lonmin)
+        loni_min = np.min(np.nonzero(fX >= lonmin))
+        if DBG_MSG:
+            print("fX_min: {}, args.lonmin: {}, lonmin: {}, loni_min: {}, fx_loni_min: {}".format(fX_min, args.lonmin, lonmin, loni_min, fX[loni_min]))
+        lonmax = fX_max if args.lonmax is None else min(fX_max, args.lonmax)
+        loni_max = np.max(np.nonzero(fX <= lonmax))
+        if DBG_MSG:
+            print("fX_max: {}, args.lonmax: {}, lonmax: {}, loni_max: {}, fx_loni_max: {}".format(fX_max, args.lonmax, lonmax, loni_max, fX[loni_max]))
+        # if resample_x == 1 or resample_x == 2:
+        #     lonmin = (lonmin / 180.0) * ((2.0 * np.pi * equatorial_a_radius) / 2.0)
+        #     lonmax = (lonmax / 180.0) * ((2.0 * np.pi * equatorial_a_radius) / 2.0)
+        fX_ext = (max(fX_ext[0], fX[loni_min]), min(fX_ext[1], fX[loni_max]))
+        loni_range = loni_max-loni_min
+        sX = fX_ext[1] - fX_ext[0]
+    if args.latmin is not None or args.latmax is not None:
+        clip = True
+        latmin = fY_min if args.latmin is None else max(fY_min, args.latmin)
+        lati_min = np.min(np.nonzero(fY >= latmin))
+        if DBG_MSG:
+            print("fY_min: {}, args.latmin: {}, latmin: {}, lati_min: {}, fy_lati_min: {}".format(fY_min, args.latmin, latmin, lati_min, fY[lati_min]))
+        latmax = fY_max if args.latmax is None else min(fY_max, args.latmax)
+        lati_max = np.max(np.nonzero(fY <= latmax))
+        if DBG_MSG:
+            print("fY_max: {}, args.latmax: {}, latmax: {}, lati_max: {}, fy_lati_max: {}".format(fY_max, args.latmax, latmax, lati_max, fY[lati_max]))
+        # if resample_y == 1 or resample_y == 2:
+        #     latmin = (latmin / 90.0) * ((2.0 * np.pi * polar_b_radius) / 2.0)
+        #     latmax = (latmax / 90.0) * ((2.0 * np.pi * polar_b_radius) / 2.0)
+        fY_ext = (max(fY_ext[0], fY[lati_min]), min(fY_ext[1], fY[lati_max]))
+        lati_range = lati_max-lati_min
+        sY = fY_ext[1] - fY_ext[0]
+    if args.depthmax is not None and is3D:
+        clip = True
+        depthi_max = np.max(np.nonzero(fZ <= args.depthmax))
+        fZ_ext = (fZ_ext[0], min(fZ_ext[1], fZ[depthi_max]))
+        depthi_range = depthi_max-0
+        if DBG_MSG:
+            print("fZ_max: {}. args.depthmax: {}, fZ_ext: {}, depthi_max: {}, fz_depthi_max: {}".format(fZ_max, args.depthmax, fZ_ext, depthi_max, fZ[depthi_max]))
+        sZ = fZ_ext[1] - fZ_ext[0]
+    if args.fixZ and is3D:
+        fZ_ext = (fZ_ext[1] * -1.0, fZ_ext[0] * -1.0)
+        sZ = fZ_ext[1] - fZ_ext[0]
+    print("clip: {}".format(clip))
+    if clip:
+        print("sX (clip) - {}".format(sX))
+        print("sY (clip) - {}".format(sY))
+        if is3D:
+            print("sZ (clip) - {}".format(sZ))
+        print("fX ext. (clip) - {}".format(fX_ext))
+        print("fY ext. (clip) - {}".format(fY_ext))
+        if is3D:
+            print("fZ ext. (clip) - {}".format(fZ_ext))
+        print("fT ext. (clip) - {}".format(fT_ext))
+    print("Indices: \n\tfXi: [{} - {}], |fXi| = {}\n\tfYi: [{} - {}], |fYi| = {}\n\tfZi: [{} - {}], |fZi| = {}".format(loni_min, loni_max, loni_range, lati_min, lati_max, lati_range, 0, depthi_max, depthi_range))
+
+    # exit()
 
     # ==== time interpolation ==== #
     ti_min = 0
@@ -1378,6 +1510,7 @@ if __name__=='__main__':
     iT_max = np.max(fT)
     iT_min = np.min(fT)
     tsteps = int(math.floor((fT_ext[1]-fT_ext[0])/fT_dt))
+    print("ti_min: {}; ti_max: {}; idt: {}; iT: {}; cap_min: {}; cap_max: {}; iT_min: {}; iT_max: {}; tsteps: {}".format(ti_min, ti_max, idt, iT, cap_min, cap_max, iT_min, iT_max, tsteps))
 
     rho_minmax = [0., 0.]
     rho_statistics = [0., 0.]
@@ -1388,17 +1521,17 @@ if __name__=='__main__':
         if hdf5_write:
             rho_file = h5py.File(os.path.join(outdir, "hydrodynamic_rho.h5"), "w")
             rho_file_ds = rho_file.create_dataset("density",
-                                                  shape=(1, fZ.shape[0], fY.shape[0], fX.shape[0]),
-                                                  maxshape=(iT.shape[0], fZ.shape[0], fY.shape[0], fX.shape[0]),
+                                                  shape=(1, depthi_range, lati_range, loni_range),
+                                                  maxshape=(iT.shape[0], depthi_range, lati_range, loni_range),
                                                   dtype=np.float32,
                                                   compression="gzip", compression_opts=4)
             rho_file_ds.attrs['unit'] = "kg/m^3"
             rho_file_ds.attrs['name'] = "sea water density"
         if netcdf_write:
             rho_nc_file = Dataset(os.path.join(outdir, "hydrodynamic_rho.nc"), mode='w', format='NETCDF4_CLASSIC')
-            rho_nc_xdim = rho_nc_file.createDimension('lon', fX.shape[0])
-            rho_nc_ydim = rho_nc_file.createDimension('lat', fY.shape[0])
-            rho_nc_zdim = rho_nc_file.createDimension('depth', fZ.shape[0])
+            rho_nc_xdim = rho_nc_file.createDimension('lon', loni_range)
+            rho_nc_ydim = rho_nc_file.createDimension('lat', lati_range)
+            rho_nc_zdim = rho_nc_file.createDimension('depth', depthi_range)
             rho_nc_tdim = rho_nc_file.createDimension('time', None)
             rho_nc_xvar = rho_nc_file.createVariable('lon', np.float32, ('lon', ))
             rho_nc_yvar = rho_nc_file.createVariable('lat', np.float32, ('lat', ))
@@ -1414,9 +1547,12 @@ if __name__=='__main__':
             rho_nc_zvar.long_name = "depth"
             rho_nc_tvar.units = "seconds"
             rho_nc_tvar.long_name = "time"
-            rho_nc_xvar[:] = fX
-            rho_nc_yvar[:] = fY
-            rho_nc_zvar[:] = fZ
+            rho_nc_xvar[:] = fX[loni_min:loni_max]
+            rho_nc_yvar[:] = fY[lati_min:lati_max]
+            rho_nc_zvar[:] = fZ[0:depthi_range]
+            if args.fix3D:
+                # still TODO
+                pass
             rho_nc_value = rho_nc_file.createVariable('density', np.float32, ('time', 'depth', 'lat', 'lon'))
             rho_nc_value.units = "kg/m^3"
             rho_nc_value.standard_name = "sea water density"
@@ -1430,17 +1566,17 @@ if __name__=='__main__':
         if hdf5_write:
             pres_file = h5py.File(os.path.join(outdir, "hydrodynamic_pressure.h5"), "w")
             pres_file_ds = pres_file.create_dataset("pressure",
-                                                    shape=(1, fZ.shape[0], fY.shape[0], fX.shape[0]),
-                                                    maxshape=(iT.shape[0], fZ.shape[0], fY.shape[0], fX.shape[0]),
+                                                    shape=(1, depthi_range, lati_range, loni_range),
+                                                    maxshape=(iT.shape[0], depthi_range, lati_range, loni_range),
                                                     dtype=np.float32,
                                                     compression="gzip", compression_opts=4)
             pres_file_ds.attrs['unit'] = "bar"
             pres_file_ds.attrs['name'] = "pressure"
         if netcdf_write:
             pres_nc_file = Dataset(os.path.join(outdir, "hydrodynamic_pressure.nc"), mode='w', format='NETCDF4_CLASSIC')
-            pres_nc_xdim = pres_nc_file.createDimension('lon', fX.shape[0])
-            pres_nc_ydim = pres_nc_file.createDimension('lat', fY.shape[0])
-            pres_nc_zdim = pres_nc_file.createDimension('depth', fZ.shape[0])
+            pres_nc_xdim = pres_nc_file.createDimension('lon', loni_range)
+            pres_nc_ydim = pres_nc_file.createDimension('lat', lati_range)
+            pres_nc_zdim = pres_nc_file.createDimension('depth', depthi_range)
             pres_nc_tdim = pres_nc_file.createDimension('time', None)
             pres_nc_xvar = pres_nc_file.createVariable('lon', np.float32, ('lon', ))
             pres_nc_yvar = pres_nc_file.createVariable('lat', np.float32, ('lat', ))
@@ -1456,19 +1592,42 @@ if __name__=='__main__':
             pres_nc_zvar.long_name = "depth"
             pres_nc_tvar.units = "seconds"
             pres_nc_tvar.long_name = "time"
-            pres_nc_xvar[:] = fX
-            pres_nc_yvar[:] = fY
-            pres_nc_zvar[:] = fZ
+            pres_nc_xvar[:] = fX[loni_min:loni_max]
+            pres_nc_yvar[:] = fY[lati_min:lati_max]
+            pres_nc_zvar[:] = fZ[0:depthi_range]
+            if args.fix3D:
+                # still TODO
+                pass
             pres_nc_value = pres_nc_file.createVariable('pressure', ('time', 'depth', 'lat', 'lon'))
             pres_nc_value.units = "bar"
             pres_nc_value.standard_name = "pressure"
 
     print("Calculating pressure and density ...")
-    rho = np.zeros((fZ.shape[0], fY.shape[0], fX.shape[0]))
-    pres = np.zeros((fZ.shape[0], fY.shape[0], fX.shape[0]))
+    idx_x, idx_y, idx_z = np.meshgrid(range(loni_min,loni_max), range(lati_min,lati_max),range(0, depthi_max), sparse=False,
+                                      indexing='ij', copy=False)
+    idx_x = idx_x.flatten()
+    idx_y = idx_y.flatten()
+    idx_z = idx_z.flatten()
+
+    items = np.column_stack((idx_x, idx_y, idx_z))
+
+    # items = zip(idx_x, idx_y, idx_z)
+    # items = []
+    # for _indices in range(0, idx_x.shape[0]):
+    #     items.append((idx_x[_indices], idx_y[_indices], idx_z[_indices]))
+    # print("Indices: {}\n".format(items[0].shape[0], items[1].shape[0], items[2].shape[0]))
+
+    print("Indices: {}\n".format(items))
+
+    # exit()
+
+    rho = np.zeros((depthi_range, lati_range, loni_range))
+    pres = np.zeros((depthi_range, lati_range, loni_range))
     seconds_per_day = 24.0*60.0*60.0
     total_items = (ti_max + 1) - ti_min
+    total_values = total_items * loni_range * lati_range * depthi_range
     current_item = 0
+    current_values = 0
     for ti in range(ti_min, ti_max + 1):
         tx0 = iT_min + float(ti) * idt
         uvw_ti0 = ti
@@ -1500,16 +1659,16 @@ if __name__=='__main__':
         if DBG_MSG:
             print("Loading files timestep ti0")
         # ---- load ti0 ---- #
-        f_u_0 = xr.open_dataset(uvel_fpath_ti0, decode_cf=True, engine='netcdf4')
-        if DBG_MSG:
-            print("Loaded XYZ data (ti=0).")
-        fU0 = f_u_0.variables[uvar]
-        f_v_0 = xr.open_dataset(vvel_fpath_ti0, decode_cf=True, engine='netcdf4')
-        fV0 = f_v_0.variables[vvar]
-        fW0 = None
-        if hasW:
-            f_w_0 = xr.open_dataset(wvel_fpath_ti0, decode_cf=True, engine='netcdf4')
-            fW0 = f_w_0.variables[wvar]
+        # if DBG_MSG:
+        #     print("Loaded XYZ data (ti=0).")
+        # f_u_0 = xr.open_dataset(uvel_fpath_ti0, decode_cf=True, engine='netcdf4')
+        # fU0 = f_u_0.variables[uvar]
+        # f_v_0 = xr.open_dataset(vvel_fpath_ti0, decode_cf=True, engine='netcdf4')
+        # fV0 = f_v_0.variables[vvar]
+        # fW0 = None
+        # if hasW:
+        #     f_w_0 = xr.open_dataset(wvel_fpath_ti0, decode_cf=True, engine='netcdf4')
+        #     fW0 = f_w_0.variables[wvar]
         f_tp_0 = xr.open_dataset(tp_fpath_ti0, decode_cf=True, engine='netcdf4')
         fTP0 = f_tp_0.variables[tpvar]
         f_na_0 = xr.open_dataset(na_fpath_ti0, decode_cf=True, engine='netcdf4')
@@ -1522,8 +1681,8 @@ if __name__=='__main__':
                 rho_filename = "hydrodynamic_rho_d%d.h5" % (ti, )
                 rho_file = h5py.File(os.path.join(outdir, rho_filename), "w")
                 rho_file_ds = rho_file.create_dataset("density",
-                                                      shape=(1, fZ.shape[0], fY.shape[0], fX.shape[0]),
-                                                      maxshape=(iT.shape[0], fZ.shape[0], fY.shape[0], fX.shape[0]),
+                                                      shape=(1, depthi_range, lati_range, loni_range),
+                                                      maxshape=(iT.shape[0], depthi_range, lati_range, loni_range),
                                                       dtype=np.float32,
                                                       compression="gzip", compression_opts=4)
                 rho_file_ds.attrs['unit'] = "kg/m^3"
@@ -1533,9 +1692,9 @@ if __name__=='__main__':
             if netcdf_write:
                 rho_filename = "hydrodynamic_rho_d%d.nc" % (ti, )
                 rho_nc_file = Dataset(os.path.join(outdir, rho_filename), mode='w', format='NETCDF4_CLASSIC')
-                rho_nc_xdim = rho_nc_file.createDimension('lon', fX.shape[0])
-                rho_nc_ydim = rho_nc_file.createDimension('lat', fY.shape[0])
-                rho_nc_zdim = rho_nc_file.createDimension('depth', fZ.shape[0])
+                rho_nc_xdim = rho_nc_file.createDimension('lon', loni_range)
+                rho_nc_ydim = rho_nc_file.createDimension('lat', lati_range)
+                rho_nc_zdim = rho_nc_file.createDimension('depth', depthi_range)
                 rho_nc_tdim = rho_nc_file.createDimension('time', None)
                 rho_nc_xvar = rho_nc_file.createVariable('lon', np.float32, ('lon', ))
                 rho_nc_yvar = rho_nc_file.createVariable('lat', np.float32, ('lat', ))
@@ -1551,9 +1710,9 @@ if __name__=='__main__':
                 rho_nc_zvar.long_name = "depth"
                 rho_nc_tvar.units = "seconds"
                 rho_nc_tvar.long_name = "time"
-                rho_nc_xvar[:] = fX
-                rho_nc_yvar[:] = fY
-                rho_nc_zvar[:] = fZ
+                rho_nc_xvar[:] = fX[loni_min:loni_max]
+                rho_nc_yvar[:] = fY[lati_min:lati_max]
+                rho_nc_zvar[:] = fZ[0:depthi_range]
                 rho_nc_value = rho_nc_file.createVariable('density', np.float32, ('time', 'depth', 'lat', 'lon'))
                 rho_nc_value.units = "kg/m^3"
                 rho_nc_value.standard_name = "sea water density"
@@ -1564,8 +1723,8 @@ if __name__=='__main__':
                 pres_filename = "hydrodynamic_pressure_d%d.h5" %(ti, )
                 pres_file = h5py.File(os.path.join(outdir, pres_filename), "w")
                 pres_file_ds = pres_file.create_dataset("pressure",
-                                                        shape=(1, fZ.shape[0], fY.shape[0], fX.shape[0]),
-                                                        maxshape=(iT.shape[0], fZ.shape[0], fY.shape[0], fX.shape[0]),
+                                                        shape=(1, depthi_range, lati_range, loni_range),
+                                                        maxshape=(iT.shape[0], depthi_range, lati_range, loni_range),
                                                         dtype=np.float32,
                                                         compression="gzip", compression_opts=4)
                 pres_file_ds.attrs['unit'] = "bar"
@@ -1575,9 +1734,9 @@ if __name__=='__main__':
             if netcdf_write:
                 pres_filename = "hydrodynamic_pressure_d%d.nc" %(ti, )
                 pres_nc_file = Dataset(os.path.join(outdir, pres_filename), mode='w', format='NETCDF4_CLASSIC')
-                pres_nc_xdim = pres_nc_file.createDimension('lon', fX.shape[0])
-                pres_nc_ydim = pres_nc_file.createDimension('lat', fY.shape[0])
-                pres_nc_zdim = pres_nc_file.createDimension('depth', fZ.shape[0])
+                pres_nc_xdim = pres_nc_file.createDimension('lon', loni_range)
+                pres_nc_ydim = pres_nc_file.createDimension('lat', lati_range)
+                pres_nc_zdim = pres_nc_file.createDimension('depth', depthi_range)
                 pres_nc_tdim = pres_nc_file.createDimension('time', None)
                 pres_nc_xvar = pres_nc_file.createVariable('lon', np.float32, ('lon', ))
                 pres_nc_yvar = pres_nc_file.createVariable('lat', np.float32, ('lat', ))
@@ -1593,25 +1752,53 @@ if __name__=='__main__':
                 pres_nc_zvar.long_name = "depth"
                 pres_nc_tvar.units = "seconds"
                 pres_nc_tvar.long_name = "time"
-                pres_nc_xvar[:] = fX
-                pres_nc_yvar[:] = fY
-                pres_nc_zvar[:] = fZ
-                pres_nc_value = pres_nc_file.createVariable('pressure', ('time', 'depth', 'lat', 'lon'))
+                pres_nc_xvar[:] = fX[loni_min:loni_max]
+                pres_nc_yvar[:] = fY[lati_min:lati_max]
+                pres_nc_zvar[:] = fZ[0:depthi_range]
+                pres_nc_value = pres_nc_file.createVariable('pressure', np.float32, ('time', 'depth', 'lat', 'lon'))
                 pres_nc_value.units = "bar"
                 pres_nc_value.standard_name = "pressure"
             # ==== === files created. === ==== #
-            # ==== ==== compute density and pressure ==== ==== #
-            idx_x, idx_y, idx_z = np.meshgrid(range(fX.shape[0]), range(fY.shape[0]),range(fZ.shape[0]),
-                                              sparse=False, indexing='ij', copy=False)
-            items = zip(idx_x, idx_y, idx_z)
-            with Pool(initializer=worker_init, initargs=(fX, fY, fZ, fTP0, fNA0)) as pool:
-                for result in pool.starmap(PolyTEOS10_bsq_func, items):
-                    (i, j, k, val_rho, val_pres) = result
-                    rho[k, j, i] = val_rho
-                    pres[k, j, i] = val_pres
 
+            # exit()
+
+            # ==== ==== compute density and pressure ==== ==== #
+            # # idx_x, idx_y, idx_z = np.meshgrid(range(fX.shape[0]), range(fY.shape[0]),range(fZ.shape[0]), sparse=False, indexing='ij', copy=False)
+            # # items = zip(idx_x.tolist(), idx_y.tolist(), idx_z.tolist())
+            # # items = np.column_stack((idx_x, idx_y, idx_z))
+            # # items = []
+            # # for _indices in range(0, idx_x.shape[0]):
+            # #     items.append((idx_x[_indices], idx_y[_indices], idx_z[_indices]))
+            # # print("Indices: {}\n".format(items))
+            # items = np.column_stack((idx_x, idx_y, idx_z, np.array([ti, ] * idx_x.shape[0])))
+            # print("Indices: {}\n".format(items))
+            fTP = np.array(fTP0[local_ti0]).squeeze()
+            fNA = np.array(fNA0[local_ti0]).squeeze()
+
+            if numba:
+                density_ti, pressure_ti = PolyTEOS10_bsq_numba(fX, fY, fZ, fTP, fNA, items, dtype=np.float32)
+                density_ti = np.reshape(density_ti, (depthi_range, lati_range, loni_range))
+                pressure_ti = np.reshape(pressure_ti, (depthi_range, lati_range, loni_range))
+                rho[:, :, :] = density_ti
+                pressure_ti[:, :, :] = pressure_ti
+                workdone = current_item / total_items
+                print("\rProgress: [{0:50s}] {1:.1f}%".format('#' * int(workdone * 50), workdone * 100), end="", flush=True)
+            else:
+                with Pool(initializer=worker_init, initargs=(fX, fY, fZ, fTP, fNA)) as pool:
+                    for result in pool.starmap(PolyTEOS10_bsq_func, items):  #, chunksize=4
+                        (i, j, k, val_rho, val_pres) = result
+                        rho[k-0, j-lati_min, i-loni_min] = val_rho
+                        pres[k-0, j-lati_min, i-loni_min] = val_pres
+                        current_values += 1
+                        workdone = current_values / total_values
+                        print("\rProgress: [{0:50s}] {1:.1f}%".format('#' * int(workdone * 50), workdone * 100), end="", flush=True)
+            del fTP
+            del fNA
+
+            # ======================================================== #
             # rho[:, :, :] = np.reshape(rho_local, p_corner_x.shape)
             # pres[:, :, :] = np.reshape(pres_local, p_corner_x.shape)
+            # ======================================================== #
 
             rho_minmax = [min(rho_minmax[0], rho.min()), max(rho_minmax[1], rho.max())]
             rho_statistics[0] += rho.mean()
@@ -1658,8 +1845,12 @@ if __name__=='__main__':
         rho_local = None
         pres_local = None
         current_item = ti
-        workdone = current_item / total_items
-        print("\rProgress: [{0:50s}] {1:.1f}%".format('#' * int(workdone * 50), workdone * 100), end="", flush=True)
+        f_tp_0.close()
+        f_na_0.close()
+        if DBG_MSG:
+            print("Finished timestep {} of {}.".format(ti, ti_max))
+        # workdone = current_item / total_items
+        # print("\rProgress: [{0:50s}] {1:.1f}%".format('#' * int(workdone * 50), workdone * 100), end="", flush=True)
     print("\nFinished UV-interpolation.")
 
     if save_single_file:
