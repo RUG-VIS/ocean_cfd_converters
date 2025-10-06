@@ -246,31 +246,36 @@ def perIterGC():
 
 if numba:
     @numba.njit(parallel=True)
-    def PolyTEOS10_bsq_numba(fX, fY, fZ, fTP0, fNA0, items, dtype=np.float32):
+    # @numba.jit(parallel=True)
+    def PolyTEOS10_bsq_numba(fX, fY, fZ, fTP, fNA, items):
+        # fNA = fNA.asarray()
+        # fTP = fTP.asarray()
         Ncount = fX.shape[0]
-        density = np.zeros(Ncount, dtype=dtype)
-        pressure = np.zeros(Ncount, dtype=dtype)
+        density = np.zeros(fTP.shape, dtype=fTP.dtype)
+        pressure = np.zeros(fTP.shape, dtype=fTP.dtype)
         for i in numba.prange(items.shape[0]):
+            zi = items[i, 2]
+            yi = items[i, 1]
+            xi = items[i, 0]
             if DBG_MSG:
-                print("Parameters: {}\n".format((items[i, 0], items[i, 1], items[i, 2], ti)))
-            Z = -fZ[items[i, 2]]  # note: use negative depths!
-            SA = fNA0[items[i, 2], items[i, 1], items[i, 0]]
-            CT = fTP0[items[i, 2], items[i, 1], items[i, 0]]
-            ss = math.sqrt((SA + deltaS) / SAu)
+                print("Parameters: (" + str(xi) + ", " + str(yi) + ", " + str(zi) + ").")
+            Z = -fZ[zi]  # note: use negative depths!
+            SA = fNA[zi, yi, xi]
+            CT = fTP[zi, yi, xi]
+            if DBG_MSG:
+                print("Obtained values.")
+            # ss = math.sqrt((SA + deltaS) / SAu)
+            ss = np.sqrt((SA + deltaS) / SAu)
             tt = CT / CTu
             zz = -Z / Zu
             rz3 = R013 * tt + R103 * ss + R003
             rz2 = (R022 * tt + R112 * ss + R012) * tt + (R202 * ss + R102) * ss + R002
-            rz1 = (((R041 * tt + R131 * ss + R031) * tt + (R221 * ss + R121) * ss + R021) * tt +
-                   ((R311 * ss + R211) * ss + R111) * ss + R011) * tt + \
-                  (((R401 * ss + R301) * ss + R201) * ss + R101) * ss + R001
-            rz0 = (((((R060 * tt + R150 * ss + R050) * tt + (R240 * ss + R140) * ss + R040) * tt +
-                     ((R330 * ss + R230) * ss + R130) * ss + R030) * tt +
-                    (((R420 * ss + R320) * ss + R220) * ss + R120) * ss + R020) * tt +
-                   ((((R510 * ss + R410) * ss + R310) * ss + R210) * ss + R110) * ss + R010) * tt + \
-                  (((((R600 * ss + R500) * ss + R400) * ss + R300) * ss + R200) * ss + R100) * ss + R000
-            density[i] = ((rz3 * zz + rz2) * zz + rz1) * zz + rz0  # [kg/m^3]
-            pressure[i] = rho_sw * g_const * fZ[items[i, 2]] + p0  # [bar]
+            rz1 = (((R041 * tt + R131 * ss + R031) * tt + (R221 * ss + R121) * ss + R021) * tt + ((R311 * ss + R211) * ss + R111) * ss + R011) * tt +  (((R401 * ss + R301) * ss + R201) * ss + R101) * ss + R001
+            rz0 = (((((R060 * tt + R150 * ss + R050) * tt + (R240 * ss + R140) * ss + R040) * tt + ((R330 * ss + R230) * ss + R130) * ss + R030) * tt + (((R420 * ss + R320) * ss + R220) * ss + R120) * ss + R020) * tt + ((((R510 * ss + R410) * ss + R310) * ss + R210) * ss + R110) * ss + R010) * tt +  (((((R600 * ss + R500) * ss + R400) * ss + R300) * ss + R200) * ss + R100) * ss + R000
+            density[zi, yi, xi] = ((rz3 * zz + rz2) * zz + rz1) * zz + rz0  # [kg/m^3]
+            pressure[zi, yi, xi] = rho_sw * g_const * fZ[zi] + p0  # [bar]
+            if DBG_MSG:
+                print("Processed item " + str(i+1) + " of " + str(Ncount) + ".")
 
 
         return (density, pressure)
@@ -1776,11 +1781,14 @@ if __name__=='__main__':
             fNA = np.array(fNA0[local_ti0]).squeeze()
 
             if numba:
-                density_ti, pressure_ti = PolyTEOS10_bsq_numba(fX, fY, fZ, fTP, fNA, items, dtype=np.float32)
-                density_ti = np.reshape(density_ti, (depthi_range, lati_range, loni_range))
-                pressure_ti = np.reshape(pressure_ti, (depthi_range, lati_range, loni_range))
-                rho[:, :, :] = density_ti
-                pressure_ti[:, :, :] = pressure_ti
+                density_ti, pressure_ti = PolyTEOS10_bsq_numba(fX, fY, fZ, fTP, fNA, items)
+                # density_ti = np.reshape(density_ti, (depthi_range, lati_range, loni_range))
+                # pressure_ti = np.reshape(pressure_ti, (depthi_range, lati_range, loni_range))
+                rho[:, :, :] = density_ti[0:depthi_max, lati_min:lati_max, loni_min:loni_max]
+                pres[:, :, :] = pressure_ti[0:depthi_max, lati_min:lati_max, loni_min:loni_max]
+                del density_ti
+                del pressure_ti
+                current_item = ti
                 workdone = current_item / total_items
                 print("\rProgress: [{0:50s}] {1:.1f}%".format('#' * int(workdone * 50), workdone * 100), end="", flush=True)
             else:
@@ -1844,11 +1852,11 @@ if __name__=='__main__':
 
         rho_local = None
         pres_local = None
-        current_item = ti
         f_tp_0.close()
         f_na_0.close()
         if DBG_MSG:
             print("Finished timestep {} of {}.".format(ti, ti_max))
+        # current_item = ti
         # workdone = current_item / total_items
         # print("\rProgress: [{0:50s}] {1:.1f}%".format('#' * int(workdone * 50), workdone * 100), end="", flush=True)
     print("\nFinished UV-interpolation.")
