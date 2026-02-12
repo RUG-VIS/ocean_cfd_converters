@@ -261,7 +261,7 @@ if __name__=='__main__':
     parser.add_argument("-V", "--Vpattern", dest="Vpattern", type=str, default='*V.nc', help="pattern of V-file(s)")
     parser.add_argument("--vvar", dest="vvar", type=str, default='vomecrty', help="variable name of V")
     parser.add_argument("-W", "--Wpattern", dest="Wpattern", type=str, default='*W.nc', help="pattern of W-file(s)")
-    parser.add_argument("--wvar", dest="wvar", type=str, default='W', help="variable name of W")
+    parser.add_argument("--wvar", dest="wvar", type=str, default='None', help="variable name of W")
     parser.add_argument("--xvar", dest="xvar", type=str, default="None", help="variable name of x")
     parser.add_argument("--xuvar", dest="xuvar", type=str, default="None", help="variable name of x in field 'U', if differing between fields.")
     parser.add_argument("--xvvar", dest="xvvar", type=str, default="None", help="variable name of x in field 'V', if differing between fields.")
