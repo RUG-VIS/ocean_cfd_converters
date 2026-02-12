@@ -1628,18 +1628,18 @@ if __name__=='__main__':
                     us_file_ds.attrs['max'] = us_minmax[1]
                     us_file_ds.attrs['mean'] = us_statistics[0]
                     us_file_ds.attrs['std'] = us_statistics[1]
-                    us_file_ds.close()
+                    us_file.close()
                     vs_file_ds.attrs['min'] = vs_minmax[0]
                     vs_file_ds.attrs['max'] = vs_minmax[1]
                     vs_file_ds.attrs['mean'] = vs_statistics[0]
                     vs_file_ds.attrs['std'] = vs_statistics[1]
-                    vs_file_ds.close()
+                    vs_file.close()
                     if hasW:
                         ws_file_ds.attrs['min'] = ws_minmax[0]
                         ws_file_ds.attrs['max'] = ws_minmax[1]
                         ws_file_ds.attrs['mean'] = ws_statistics[0]
                         ws_file_ds.attrs['std'] = ws_statistics[1]
-                        ws_file_ds.close()
+                        ws_file.close()
                 if netcdf_write:
                     us_nc_tvar[0] = tx0
                     us_nc_file.close()
@@ -1676,18 +1676,18 @@ if __name__=='__main__':
             us_file_ds.attrs['max'] = us_minmax[1]
             us_file_ds.attrs['mean'] = us_statistics[0]
             us_file_ds.attrs['std'] = us_statistics[1]
-            us_file_ds.close()
+            us_file.close()
             vs_file_ds.attrs['min'] = vs_minmax[0]
             vs_file_ds.attrs['max'] = vs_minmax[1]
             vs_file_ds.attrs['mean'] = vs_statistics[0]
             vs_file_ds.attrs['std'] = vs_statistics[1]
-            vs_file_ds.close()
+            vs_file.close()
             if hasW:
                 ws_file_ds.attrs['min'] = ws_minmax[0]
                 ws_file_ds.attrs['max'] = ws_minmax[1]
                 ws_file_ds.attrs['mean'] = ws_statistics[0]
                 ws_file_ds.attrs['std'] = ws_statistics[1]
-                ws_file_ds.close()
+                ws_file.close()
         if netcdf_write:
             us_nc_tvar[:] = iT[0]
             vs_nc_tvar[:] = iT[0]
