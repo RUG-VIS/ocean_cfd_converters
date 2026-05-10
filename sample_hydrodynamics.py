@@ -250,6 +250,7 @@ def perIterGC():
 #                python3 doublegyre_scenario.py -f metadata.txt -t 366 -dt 60 -ot 1440 -im 'rk4' -N 2**12 -sres 1.25 -gres 2 -sm 'regular_jitter' -fsx 540 -fsy 270 -fsz 20 -3D
 #                python3 density4hydrodynamics.py --hydrodir /media/christian/OneTouch/storage/data/hydrodynamics/CMEMS/2023-3D/currents/ --physdir /media/christian/OneTouch/storage/data/hydrodynamics/CMEMS/2023-3D/physics/ -o /media/christian/OneTouch/storage/data/hydrodynamics/CMEMS/2023-3D/physplus/ -U glo12_rg_1d-m_????????-????????_3D-uovo_* -V glo12_rg_1d-m_????????-????????_3D-uovo_* -W glo12_rg_1d-m_????????-????????_3D-wo_* -T glo12_rg_1d-m_????????-????????_3D-thetao_* -N glo12_rg_1d-m_????????-????????_3D-so_* --uvar uo --vvar vo --wvar wo --tpvar thetao --navar so --xvar longitude --yvar latitude --zvar depth --tvar time -F nc --writeNC -LOm -15.0 -LOM 45.0 -LAm -65.0 -LAM -20.0
 #                python3 ./sample_hydrodynamics.py -d /media/christian/DATA/data/hydrodynamics/ENWS/reanalysis2D-2024/currents/ -o /media/christian/DATA/data/hydrodynamics/ENWS/reanalysis2D-2024/currents_resampled/ -U "metoffice_foam1_amm7_NWS_CUR_*" -V "metoffice_foam1_amm7_NWS_CUR_*" --uvar uo --vvar vo --xvar longitude --yvar latitude --zvar depth --tvar time -LOm -7.65 -LOM -6.05 -LAm 57.65 -LAM 59.03 -F nc --writeNC
+#                python3 /media/christian/DATA/git/ocean_cfd_converters/sample_hydrodynamics.py -d /media/christian/OneTouch/storage/data/hydrodynamics/CMEMS/2023-3D/currents/ -o /media/christian/OneTouch/storage/data/hydrodynamics/SouthernOcean/currents/ -U "glo12_rg_1d-m_*_3D-uovo_*" -V "glo12_rg_1d-m_*_3D-uovo_*" -W "glo12_rg_1d-m_*_3D-wo_*" --uvar uo --vvar vo --wvar wo --xvar longitude --yvar latitude --zvar depth --tvar time -LOm -15.0 -LOM 45.0 -LAm -65.0 -LAM -20.0 -F nc --writeNC
 # ====
 if __name__=='__main__':
     parser = ArgumentParser(description="computes the density field for a given OGCM")
@@ -421,8 +422,8 @@ if __name__=='__main__':
     grid_adaptive = False
     plain_write = True
     # ==== spatial conversion   ==== #
-    equatorial_a_radius = 63781370.0  # in [m]
-    polar_b_radius      = 63567523.0 / 2.0  # [m]
+    equatorial_a_radius = 6378137.0  # in [m]
+    polar_b_radius      = 6356752.3 / 2.0  # [m]
     # ==== time conversion data ==== #
     ns_per_sec = np.timedelta64(1, 's')  # nanoseconds in an sec
     if DBG_MSG:
@@ -843,6 +844,7 @@ if __name__=='__main__':
                 fT_ft_h5.append(fT_h5)
             for ti in range(len(fT_ft_h5)):
                 fT_fpath_mapping.append((None, uvel_fpath_nc, ti))
+            fT = np.array(fT_ft_h5)
 
             xi_same = True
             for xG in fXb_ft_h5:
