@@ -42,7 +42,7 @@ except:
 # from numba import njit, prange
 
 with_GC = False
-DBG_MSG = True
+DBG_MSG = False
 
 # a = 9.6 * 1e3 # [a in km -> 10e3]
 a = 359.0
@@ -651,7 +651,7 @@ if __name__=='__main__':
                     fT_dt = ft_1 - ft_0
                 elif len(fT_ft_h5) > 0:
                     ft_0 = convert_timevalue(fT_h5[0], t0, ns_per_sec, debug=True)
-                    fT_dt = ft_0 - fT_ft_h5[0]
+                    fT_dt = ft_0 - fT_h5[0]
             fT = np.array(fT_ft_h5)
 
             if isinstance(fT_h5, np.ndarray):
@@ -933,9 +933,9 @@ if __name__=='__main__':
     sT = fT_ext[1] - fT_ext[0]
     # ==== end - fT - scale-shift ==== #
 
-    del fX
-    del fY
-    del fZ
+    # del fX
+    # del fY
+    # del fZ
     print("sX - {}".format(sX))
     print("sY - {}".format(sY))
     print("sZ - {}".format(sZ))
@@ -1042,9 +1042,12 @@ if __name__=='__main__':
             fs_nc_zvar.long_name = "depth"
             fs_nc_tvar.units = "seconds"
             fs_nc_tvar.long_name = "time"
-            fs_nc_xvar[:] = fX[loni_min:loni_max]
-            fs_nc_yvar[:] = fY[lati_min:lati_max]
-            fs_nc_zvar[:] = fZ[0:depthi_range]
+            if fX is not None:
+                fs_nc_xvar[:] = fX[loni_min:loni_max]
+            if fY is not None:
+                fs_nc_yvar[:] = fY[lati_min:lati_max]
+            if fZ is not None and is3D:
+                fs_nc_zvar[:] = fZ[0:depthi_range]
             if args.fix3D:
                 # still TODO
                 pass
@@ -1053,7 +1056,7 @@ if __name__=='__main__':
             # fs_nc_fval.standard_name = "eastwards longitudinal zonal velocity"
 
 
-    print("Sampling 3D velocity data ...")
+    print("Sampling 3D field data data ...")
     idx_x, idx_y, idx_z = np.meshgrid(range(loni_min,loni_max), range(lati_min,lati_max),range(0, depthi_max), sparse=False,
                                       indexing='ij', copy=False)
     idx_x = idx_x.flatten()
@@ -1083,8 +1086,8 @@ if __name__=='__main__':
     # ================ #
     for ti in range(ti_min, ti_max + 1):
         tx0 = iT_min + float(ti) * idt
-        fpath_idx_ti0 = fT_fpath_mapping[tx0][0]
-        local_ti0 = fT_fpath_mapping[tx0][2]
+        fpath_idx_ti0 = fT_fpath_mapping[ti][0]
+        local_ti0 = fT_fpath_mapping[ti][2]
         if DBG_MSG:
             print("path ti0: {} (local index: {})".format(fpath_idx_ti0, local_ti0))
         field_fpath_ti0 = None
@@ -1102,6 +1105,12 @@ if __name__=='__main__':
         f_F_0 = xr.open_dataset(field_fpath_ti0, decode_cf=True, engine='netcdf4')
         fF0 = f_F_0.variables[Fvar]
         fF = np.array(fF0[local_ti0]).squeeze()
+        if fX is None:
+            fX = f_F_0.variables[xvar]
+        if fY is None:
+            fY = f_F_0.variables[yvar]
+        if fZ is None and is3D:
+            fZ = f_F_0.variables[zvar].data if zvar in f_F_0.variables.keys() else None
 
         if not save_single_file:
             fs_minmax = [0., 0.]
@@ -1139,9 +1148,12 @@ if __name__=='__main__':
                 fs_nc_zvar.long_name = "depth"
                 fs_nc_tvar.units = "seconds"
                 fs_nc_tvar.long_name = "time"
-                fs_nc_xvar[:] = fX[loni_min:loni_max]
-                fs_nc_yvar[:] = fY[lati_min:lati_max]
-                fs_nc_zvar[:] = fZ[0:depthi_range]
+                if fX is not None:
+                    fs_nc_xvar[:] = fX[loni_min:loni_max]
+                if fY is not None:
+                    fs_nc_yvar[:] = fY[lati_min:lati_max]
+                if fZ is not None and is3D:
+                    fs_nc_zvar[:] = fZ[0:depthi_range]
                 fs_nc_fval = fs_nc_file.createVariable('uo', np.float32, ('time', 'depth', 'lat', 'lon'))
                 # fs_nc_fval.units = "m/s"
                 # fs_nc_fval.standard_name = "eastwards longitudinal zonal velocity"
@@ -1175,8 +1187,8 @@ if __name__=='__main__':
                     fs_nc_tvar[0] = tx0
                     fs_nc_file.close()
 
-        fF0 = None
         fF = None
+        fF0 = None
         f_F_0.close()
         if DBG_MSG:
             print("Finished timestep {} of {}.".format(ti, ti_max))
@@ -1186,7 +1198,7 @@ if __name__=='__main__':
         # current_item = ti
         # workdone = current_item / total_items
         # print("\rProgress: [{0:50s}] {1:.1f}%".format('#' * int(workdone * 50), workdone * 100), end="", flush=True)
-    print("\nFinished UV(W) sampling.")
+    print("\nFinished field sampling.")
 
     if save_single_file:
         if hdf5_write:
