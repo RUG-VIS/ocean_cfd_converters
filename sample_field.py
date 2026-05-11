@@ -1014,7 +1014,7 @@ if __name__=='__main__':
     if save_single_file:
         if hdf5_write:
             fs_file = h5py.File(os.path.join(outdir, "%s.h5" % (base_fname, )), "w")
-            fs_file_ds = fs_file.create_dataset("uo",
+            fs_file_ds = fs_file.create_dataset(Fvar,
                                                 shape=(1, depthi_range, lati_range, loni_range),
                                                 maxshape=(iT.shape[0], depthi_range, lati_range, loni_range),
                                                 dtype=np.float32,
@@ -1118,7 +1118,7 @@ if __name__=='__main__':
             if hdf5_write:
                 f_filename = "%s_d%03d.h5" % (base_fname, ti, )
                 fs_file = h5py.File(os.path.join(outdir, f_filename), "w")
-                fs_file_ds = fs_file.create_dataset("uo",
+                fs_file_ds = fs_file.create_dataset(Fvar,
                                                     shape=(1, depthi_range, lati_range, loni_range),
                                                     maxshape=(iT.shape[0], depthi_range, lati_range, loni_range),
                                                     dtype=np.float32,
@@ -1154,7 +1154,7 @@ if __name__=='__main__':
                     fs_nc_yvar[:] = fY[lati_min:lati_max]
                 if fZ is not None and is3D:
                     fs_nc_zvar[:] = fZ[0:depthi_range]
-                fs_nc_fval = fs_nc_file.createVariable('uo', np.float32, ('time', 'depth', 'lat', 'lon'))
+                fs_nc_fval = fs_nc_file.createVariable(Fvar, np.float32, ('time', 'depth', 'lat', 'lon'))
                 # fs_nc_fval.units = "m/s"
                 # fs_nc_fval.standard_name = "eastwards longitudinal zonal velocity"
             # ==== === files created. === ==== #
