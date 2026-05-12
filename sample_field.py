@@ -788,6 +788,10 @@ if __name__=='__main__':
     print("fZ ext. (in) - {}".format(fZ_ext))
     print("fT ext. (in) - {}".format(fT_ext))
     print("fT: {}".format(fT))
+    sX = fX_ext[1] - fX_ext[0]
+    sY = fY_ext[1] - fY_ext[0]
+    sZ = fZ_ext[1] - fZ_ext[0]
+    sT = fT_ext[1] - fT_ext[0]
 
     # ==== scale subsetting ==== #
     loni_min = 0
@@ -857,10 +861,7 @@ if __name__=='__main__':
             print("fZ ext. (clip) - {}".format(fZ_ext))
         print("fT ext. (clip) - {}".format(fT_ext))
     print("Indices: \n\tfXi: [{} - {}], |fXi| = {}\n\tfYi: [{} - {}], |fYi| = {}\n\tfZi: [{} - {}], |fZi| = {}".format(loni_min, loni_max, loni_range, lati_min, lati_max, lati_range, 0, depthi_max, depthi_range))
-    sX = fX_ext[1] - fX_ext[0]
-    sY = fY_ext[1] - fY_ext[0]
-    sZ = fZ_ext[1] - fZ_ext[0]
-    sT = fT_ext[1] - fT_ext[0]
+
     resample_x = 0
     resample_y = 0
     if metric_resample:

@@ -281,6 +281,7 @@ if __name__=='__main__':
     parser.add_argument("--tvvar", dest="tvvar", type=str, default="None", help="variable name of t in field 'V', if differing between fields.")
     parser.add_argument("--twvar", dest="twvar", type=str, default="None", help="variable name of t in field 'W', if differing between fields.")
     parser.add_argument("--fixZ", dest="fixZ", action="store_true", default=False, help="transform z-Axis to display height, e.g. depth is negative")
+    parser.add_argument("--metric", dest="metric", action='store_true', default=False, help="stores if coordinates are resampled to metric metres (True) or not (False; default).")
     parser.add_argument("-LOm", "--lonmin", dest="lonmin", type=float, default=None, help="min. longitude (in arcdegrees or metres) to be plotted - only effective when interpolating")
     parser.add_argument("-LOM", "--lonmax", dest="lonmax", type=float, default=None, help="max. longitude (in arcdegrees or metres) to be plotted - only effective when interpolating")
     parser.add_argument("-LAm", "--latmin", dest="latmin", type=float, default=None, help="min. latitude (in arcdegrees or metres) to be plotted - only effective when interpolating")
@@ -317,6 +318,7 @@ if __name__=='__main__':
     is3D = True
     scale_T = float(eval(args.scale_T))
     shift_T = float(eval(args.shift_T))
+    metric_resample = args.metric
     netcdf_write = args.writeNC
     hdf5_write = args.writeH5
     save_single_file = False
@@ -1042,32 +1044,103 @@ if __name__=='__main__':
     sY = fY_ext[1] - fY_ext[0]
     sZ = fZ_ext[1] - fZ_ext[0]
     sT = fT_ext[1] - fT_ext[0]
-    # resample_x = 0
-    # resample_y = 0
-    # if (fX_ext[0] >= -180.1) and (fX_ext[1] <= 180.1):
-    #     fX = (fX / 180.0) * ((2.0 * np.pi * equatorial_a_radius) / 2.0)
-    #     fX_ext = (np.nanmin(fX), np.nanmax(fX))
-    #     sX = fX_ext[1] - fX_ext[0]
-    #     resample_x = 1
-    # elif (fX_ext[0] >= 0.0) and (fX_ext[1] <= 360.1):
-    #     # fX = (fX / 360.0) * (2.0 * np.pi * equatorial_a_radius)
-    #     fX = ((fX-180.0) / 180.0) * ((2.0 * np.pi * equatorial_a_radius) / 2.0)
-    #     fX_min, fX_max = fX_min-180.0, fX_max-180.0
-    #     fX_ext = (np.nanmin(fX), np.nanmax(fX))
-    #     sX = fX_ext[1] - fX_ext[0]
-    #     resample_x = 2
-    # if (fY_ext[0] >= -90.1) and (fY_ext[1] <= 90.1):
-    #     fY = (fY / 90.0) * ((2.0 * np.pi  * polar_b_radius) / 2.0)
-    #     fY_ext = (np.nanmin(fY), np.nanmax(fY))
-    #     sY = fY_ext[1] - fY_ext[0]
-    #     resample_y = 1
-    # elif (fY_ext[0] >= 0.0) and (fY_ext[1] <= 180.1):
-    #     # fY = (fY / 180.0) * (np.pi * polar_b_radius)
-    #     fY = ((fY-90.0) / 90.0) * ((2.0 * np.pi * polar_b_radius) / 2.0)
-    #     fY_min, fY_max = fY_min-90.0, fY_max-90.0
-    #     fY_ext = (np.nanmin(fY), np.nanmax(fY))
-    #     sY = fY_ext[1] - fY_ext[0]
-    #     resample_y = 2
+
+    # ==== scale subsetting ==== #
+    loni_min = 0
+    loni_max = fX_shape[0]-1
+    loni_range = loni_max-loni_min
+    lati_min = 0
+    lati_max = fY_shape[0]-1
+    lati_range = lati_max-lati_min
+    depthi_max = fZ_shape[0]-1
+    depthi_range = depthi_max-0
+    clip = False
+    sX = fX_ext[1] - fX_ext[0]
+    if args.lonmin is not None or args.lonmax is not None:
+        clip = True
+        lonmin = fX_min if args.lonmin is None else max(fX_min, args.lonmin)
+        loni_min = np.min(np.nonzero(fX >= lonmin))
+        if DBG_MSG:
+            print("fX_min: {}, args.lonmin: {}, lonmin: {}, loni_min: {}, fx_loni_min: {}".format(fX_min, args.lonmin, lonmin, loni_min, fX[loni_min]))
+        lonmax = fX_max if args.lonmax is None else min(fX_max, args.lonmax)
+        loni_max = np.max(np.nonzero(fX <= lonmax))
+        if DBG_MSG:
+            print("fX_max: {}, args.lonmax: {}, lonmax: {}, loni_max: {}, fx_loni_max: {}".format(fX_max, args.lonmax, lonmax, loni_max, fX[loni_max]))
+        # if resample_x == 1 or resample_x == 2:
+        #     lonmin = (lonmin / 180.0) * ((2.0 * np.pi * equatorial_a_radius) / 2.0)
+        #     lonmax = (lonmax / 180.0) * ((2.0 * np.pi * equatorial_a_radius) / 2.0)
+        fX_ext = (max(fX_ext[0], fX[loni_min]), min(fX_ext[1], fX[loni_max]))
+        loni_range = loni_max-loni_min
+        sX = fX_ext[1] - fX_ext[0]
+    sY = fY_ext[1] - fY_ext[0]
+    if args.latmin is not None or args.latmax is not None:
+        clip = True
+        latmin = fY_min if args.latmin is None else max(fY_min, args.latmin)
+        lati_min = np.min(np.nonzero(fY >= latmin))
+        if DBG_MSG:
+            print("fY_min: {}, args.latmin: {}, latmin: {}, lati_min: {}, fy_lati_min: {}".format(fY_min, args.latmin, latmin, lati_min, fY[lati_min]))
+        latmax = fY_max if args.latmax is None else min(fY_max, args.latmax)
+        lati_max = np.max(np.nonzero(fY <= latmax))
+        if DBG_MSG:
+            print("fY_max: {}, args.latmax: {}, latmax: {}, lati_max: {}, fy_lati_max: {}".format(fY_max, args.latmax, latmax, lati_max, fY[lati_max]))
+        # if resample_y == 1 or resample_y == 2:
+        #     latmin = (latmin / 90.0) * ((2.0 * np.pi * polar_b_radius) / 2.0)
+        #     latmax = (latmax / 90.0) * ((2.0 * np.pi * polar_b_radius) / 2.0)
+        fY_ext = (max(fY_ext[0], fY[lati_min]), min(fY_ext[1], fY[lati_max]))
+        lati_range = lati_max-lati_min
+        sY = fY_ext[1] - fY_ext[0]
+    sZ = fZ_ext[1] - fZ_ext[0]
+    if args.depthmax is not None and is3D:
+        clip = True
+        depthi_max = np.max(np.nonzero(fZ <= args.depthmax))
+        fZ_ext = (fZ_ext[0], min(fZ_ext[1], fZ[depthi_max]))
+        depthi_range = depthi_max-0
+        if DBG_MSG:
+            print("fZ_max: {}. args.depthmax: {}, fZ_ext: {}, depthi_max: {}, fz_depthi_max: {}".format(fZ_max, args.depthmax, fZ_ext, depthi_max, fZ[depthi_max]))
+        sZ = fZ_ext[1] - fZ_ext[0]
+    if args.fixZ and is3D:
+        fZ_ext = (fZ_ext[1] * -1.0, fZ_ext[0] * -1.0)
+        sZ = fZ_ext[1] - fZ_ext[0]
+    print("clip: {}".format(clip))
+    if clip:
+        print("sX (clip) - {}".format(sX))
+        print("sY (clip) - {}".format(sY))
+        if is3D:
+            print("sZ (clip) - {}".format(sZ))
+        print("fX ext. (clip) - {}".format(fX_ext))
+        print("fY ext. (clip) - {}".format(fY_ext))
+        if is3D:
+            print("fZ ext. (clip) - {}".format(fZ_ext))
+        print("fT ext. (clip) - {}".format(fT_ext))
+    print("Indices: \n\tfXi: [{} - {}], |fXi| = {}\n\tfYi: [{} - {}], |fYi| = {}\n\tfZi: [{} - {}], |fZi| = {}".format(loni_min, loni_max, loni_range, lati_min, lati_max, lati_range, 0, depthi_max, depthi_range))
+
+    resample_x = 0
+    resample_y = 0
+    if metric_resample:
+        if (fX_ext[0] >= -180.1) and (fX_ext[1] <= 180.1):
+            fX = (fX / 180.0) * ((2.0 * np.pi * equatorial_a_radius) / 2.0)
+            fX_ext = (np.nanmin(fX), np.nanmax(fX))
+            sX = fX_ext[1] - fX_ext[0]
+            resample_x = 1
+        elif (fX_ext[0] >= 0.0) and (fX_ext[1] <= 360.1):
+            # fX = (fX / 360.0) * (2.0 * np.pi * equatorial_a_radius)
+            fX = ((fX-180.0) / 180.0) * ((2.0 * np.pi * equatorial_a_radius) / 2.0)
+            fX_min, fX_max = fX_min-180.0, fX_max-180.0
+            fX_ext = (np.nanmin(fX), np.nanmax(fX))
+            sX = fX_ext[1] - fX_ext[0]
+            resample_x = 2
+        if (fY_ext[0] >= -90.1) and (fY_ext[1] <= 90.1):
+            fY = (fY / 90.0) * ((2.0 * np.pi  * polar_b_radius) / 2.0)
+            fY_ext = (np.nanmin(fY), np.nanmax(fY))
+            sY = fY_ext[1] - fY_ext[0]
+            resample_y = 1
+        elif (fY_ext[0] >= 0.0) and (fY_ext[1] <= 180.1):
+            # fY = (fY / 180.0) * (np.pi * polar_b_radius)
+            fY = ((fY-90.0) / 90.0) * ((2.0 * np.pi * polar_b_radius) / 2.0)
+            fY_min, fY_max = fY_min-90.0, fY_max-90.0
+            fY_ext = (np.nanmin(fY), np.nanmax(fY))
+            sY = fY_ext[1] - fY_ext[0]
+            resample_y = 2
     fX_dx_1 = fX[1:]
     fX_dx_0 = fX[0:-1]
     fX_dx = abs(fX_dx_1-fX_dx_0)
@@ -1131,74 +1204,6 @@ if __name__=='__main__':
     dt = fT[1] - fT[0]
     print("dT: {}; fT_dt: {}".format(dt, fT_dt))
     gc.collect()
-
-    # ==== scale subsetting ==== #
-    loni_min = 0
-    loni_max = fX.shape[0]-1
-    loni_range = loni_max-loni_min
-    lati_min = 0
-    lati_max = fY.shape[0]-1
-    lati_range = lati_max-lati_min
-    depthi_max = fZ.shape[0]-1
-    depthi_range = depthi_max-0
-    clip = False
-    if args.lonmin is not None or args.lonmax is not None:
-        clip = True
-        lonmin = fX_min if args.lonmin is None else max(fX_min, args.lonmin)
-        loni_min = np.min(np.nonzero(fX >= lonmin))
-        if DBG_MSG:
-            print("fX_min: {}, args.lonmin: {}, lonmin: {}, loni_min: {}, fx_loni_min: {}".format(fX_min, args.lonmin, lonmin, loni_min, fX[loni_min]))
-        lonmax = fX_max if args.lonmax is None else min(fX_max, args.lonmax)
-        loni_max = np.max(np.nonzero(fX <= lonmax))
-        if DBG_MSG:
-            print("fX_max: {}, args.lonmax: {}, lonmax: {}, loni_max: {}, fx_loni_max: {}".format(fX_max, args.lonmax, lonmax, loni_max, fX[loni_max]))
-        # if resample_x == 1 or resample_x == 2:
-        #     lonmin = (lonmin / 180.0) * ((2.0 * np.pi * equatorial_a_radius) / 2.0)
-        #     lonmax = (lonmax / 180.0) * ((2.0 * np.pi * equatorial_a_radius) / 2.0)
-        fX_ext = (max(fX_ext[0], fX[loni_min]), min(fX_ext[1], fX[loni_max]))
-        loni_range = loni_max-loni_min
-        sX = fX_ext[1] - fX_ext[0]
-    if args.latmin is not None or args.latmax is not None:
-        clip = True
-        latmin = fY_min if args.latmin is None else max(fY_min, args.latmin)
-        lati_min = np.min(np.nonzero(fY >= latmin))
-        if DBG_MSG:
-            print("fY_min: {}, args.latmin: {}, latmin: {}, lati_min: {}, fy_lati_min: {}".format(fY_min, args.latmin, latmin, lati_min, fY[lati_min]))
-        latmax = fY_max if args.latmax is None else min(fY_max, args.latmax)
-        lati_max = np.max(np.nonzero(fY <= latmax))
-        if DBG_MSG:
-            print("fY_max: {}, args.latmax: {}, latmax: {}, lati_max: {}, fy_lati_max: {}".format(fY_max, args.latmax, latmax, lati_max, fY[lati_max]))
-        # if resample_y == 1 or resample_y == 2:
-        #     latmin = (latmin / 90.0) * ((2.0 * np.pi * polar_b_radius) / 2.0)
-        #     latmax = (latmax / 90.0) * ((2.0 * np.pi * polar_b_radius) / 2.0)
-        fY_ext = (max(fY_ext[0], fY[lati_min]), min(fY_ext[1], fY[lati_max]))
-        lati_range = lati_max-lati_min
-        sY = fY_ext[1] - fY_ext[0]
-    if args.depthmax is not None and is3D:
-        clip = True
-        depthi_max = np.max(np.nonzero(fZ <= args.depthmax))
-        fZ_ext = (fZ_ext[0], min(fZ_ext[1], fZ[depthi_max]))
-        depthi_range = depthi_max-0
-        if DBG_MSG:
-            print("fZ_max: {}. args.depthmax: {}, fZ_ext: {}, depthi_max: {}, fz_depthi_max: {}".format(fZ_max, args.depthmax, fZ_ext, depthi_max, fZ[depthi_max]))
-        sZ = fZ_ext[1] - fZ_ext[0]
-    if args.fixZ and is3D:
-        fZ_ext = (fZ_ext[1] * -1.0, fZ_ext[0] * -1.0)
-        sZ = fZ_ext[1] - fZ_ext[0]
-    print("clip: {}".format(clip))
-    if clip:
-        print("sX (clip) - {}".format(sX))
-        print("sY (clip) - {}".format(sY))
-        if is3D:
-            print("sZ (clip) - {}".format(sZ))
-        print("fX ext. (clip) - {}".format(fX_ext))
-        print("fY ext. (clip) - {}".format(fY_ext))
-        if is3D:
-            print("fZ ext. (clip) - {}".format(fZ_ext))
-        print("fT ext. (clip) - {}".format(fT_ext))
-    print("Indices: \n\tfXi: [{} - {}], |fXi| = {}\n\tfYi: [{} - {}], |fYi| = {}\n\tfZi: [{} - {}], |fZi| = {}".format(loni_min, loni_max, loni_range, lati_min, lati_max, lati_range, 0, depthi_max, depthi_range))
-
-    # exit()
 
     # ==== time interpolation ==== #
     ti_min = 0
@@ -1424,8 +1429,8 @@ if __name__=='__main__':
         uvel_fpath_ti0 = None
         vvel_fpath_ti0 = None
         wvel_fpath_ti0 = None
-        tp_fpath_ti0 = None
-        na_fpath_ti0 = None
+        # tp_fpath_ti0 = None
+        # na_fpath_ti0 = None
         if multifile:
             uvel_fpath_ti0 = uvel_fpath_nc[fpath_idx_ti0]
             vvel_fpath_ti0 = vvel_fpath_nc[fpath_idx_ti0]
